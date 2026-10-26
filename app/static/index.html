@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Watch a real webhook move through persistence, delivery and retries.">
+  <title>Webhook Relay · Live delivery lab</title>
+  <link rel="stylesheet" href="/assets/demo.css">
+  <script src="/assets/demo.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#scenarios">Skip to scenarios</a>
+<header><a class="brand" href="/">↗ Webhook Relay</a><nav aria-label="Resources"><a href="/source">Source</a><a href="/docs">API docs ↗</a></nav></header>
+<main>
+  <section class="intro" aria-labelledby="title">
+    <p class="eyebrow">A small lab for reliable delivery</p>
+    <h1 id="title">A failed request<br>isn’t always the end.</h1>
+    <p class="lead">Send a synthetic order. Follow its real journey from a saved event to a receiver—with retries when they’re needed.</p>
+    <div class="service"><span id="health" role="status">Checking service…</span><button id="check" class="quiet" type="button">Check connection</button></div>
+  </section>
+  <section id="scenarios" aria-labelledby="scenario-title">
+    <div class="section-heading"><h2 id="scenario-title">01 / Choose a scenario</h2><span>Each click starts an independent run</span></div>
+    <div class="scenarios">
+      <button type="button" data-scenario="success"><span class="number">01</span><strong>Successful delivery</strong><span>The receiver accepts the first request.</span><span class="codes">200 <span aria-hidden="true">↗</span></span></button>
+      <button type="button" data-scenario="temporary_failure"><span class="number">02</span><strong>Retry & recover</strong><span>Two temporary failures, then a successful retry.</span><span class="codes">503 → 503 → 200 <span aria-hidden="true">↗</span></span></button>
+      <button type="button" data-scenario="permanent_failure"><span class="number">03</span><strong>Permanent failure</strong><span>A rejected request stops after one attempt.</span><span class="codes">400 <span aria-hidden="true">↗</span></span></button>
+    </div>
+    <p class="hint">Synthetic data only · Up to 5 runs per minute per client · No sign-in required</p>
+    <noscript><p class="notice">Enable JavaScript to run this demo. You can also explore the API documentation.</p></noscript>
+  </section>
+  <section class="results" aria-labelledby="result-title">
+    <div class="section-heading"><h2 id="result-title">02 / Follow the delivery</h2><button id="refresh" class="quiet" type="button" disabled>Refresh status</button></div>
+    <p id="message" class="notice" role="status" aria-live="polite">Choose a scenario to see a real delivery history.</p>
+    <div id="run" hidden>
+      <dl class="metrics"><div><dt>Status</dt><dd id="status">—</dd></div><div><dt>Elapsed</dt><dd id="elapsed">—</dd></div><div><dt>Attempts</dt><dd id="attempt-count">0 / 5</dd></div></dl>
+      <p class="event">Event <code id="event-id"></code></p>
+      <div class="table-scroll" role="region" aria-label="Delivery attempt history" tabindex="0"><table><caption>Actual attempts, in chronological order</caption><thead><tr><th scope="col">Attempt</th><th scope="col">Started</th><th scope="col">Outcome</th><th scope="col">HTTP</th><th scope="col">Duration</th></tr></thead><tbody id="attempts"></tbody></table></div>
+      <p id="expiry" class="hint"></p>
+    </div>
+    <div id="empty" class="empty"><span aria-hidden="true">↗</span><p>Your next event starts here.</p><small>The history will come from the worker’s recorded HTTP attempts.</small></div>
+  </section>
+  <section class="architecture" aria-labelledby="how-title"><h2 id="how-title">What’s happening behind the request?</h2><ol><li><strong>Producer</strong><span>A synthetic order event</span></li><li><strong>API + PostgreSQL</strong><span>Save before accepting</span></li><li><strong>Worker</strong><span>Sign, deliver, retry</span></li><li><strong>Receiver</strong><span>Apply the effect once</span></li></ol><p>Demo retries wait 2, 4, 8 and 12 seconds, with at most five attempts. Production uses longer delays with jitter. Repeated HTTP delivery is possible; the example receiver deduplicates its database effect.</p><p>Updates arrive every two seconds and stop at completion or after two minutes. You can refresh manually. Run access lasts one hour and stays only in this tab’s memory; reloading the page clears it.</p></section>
+</main>
+<footer><span>Webhook Relay / Delivery you can inspect.</span><span>Python · FastAPI · PostgreSQL</span></footer>
+</body>
+</html>

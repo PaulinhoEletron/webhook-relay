@@ -1,0 +1,103 @@
+name: webhook-relay
+
+x-app: &app
+  image: webhook-relay:0.1.0
+  build:
+    context: .
+    target: runtime
+  env_file: .env
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 192m
+
+services:
+  db:
+    image: postgres:16-alpine@sha256:d845e7f0ac8517b9d9868b6d20379f9688ba3676595e50ca7c0b664964b2a760
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_DB: relay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run make init}
+    volumes:
+      - relay-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U relay -d relay']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    mem_limit: 256m
+
+  migrate:
+    <<: *app
+    command: [alembic, upgrade, head]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  receiver:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: [uvicorn, 'receiver.main:create_app', --factory, --host, '0.0.0.0', --port, '8001', --no-access-log, --log-level, info]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    <<: *app
+    ports: ['127.0.0.1:8000:8000']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    <<: *app
+    command: [python, -m, app.worker.main]
+    stop_grace_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      receiver:
+        condition: service_healthy
+
+  test-db:
+    profiles: [test]
+    image: postgres:16-alpine@sha256:d845e7f0ac8517b9d9868b6d20379f9688ba3676595e50ca7c0b664964b2a760
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_DB: relay_test
+      POSTGRES_PASSWORD: isolated-test-password
+    tmpfs: ['/var/lib/postgresql/data:size=256m']
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U relay -d relay_test']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    mem_limit: 256m
+
+  test:
+    <<: *app
+    profiles: [test]
+    image: webhook-relay-test:0.1.0
+    build:
+      context: .
+      target: test
+    environment:
+      DATABASE_URL: postgresql+psycopg://relay:isolated-test-password@test-db:5432/relay_test
+    command: [sh, -c, 'alembic upgrade head && alembic check && pytest -q -p no:cacheprovider']
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+volumes:
+  relay-data:
