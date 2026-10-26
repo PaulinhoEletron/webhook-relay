@@ -1,14 +1,14 @@
 # Webhook Relay
 
-**Environment verified (2026-10-19):** native Docker is active; Compose startup, integration tests, delivery and restart persistence passed. See [implementation status](docs/implementation-status.md).
+**Environment verified (2026-10-26):** Compose startup, 121 backend tests, 5 browser tests, live delivery and restart persistence passed. See [implementation status](docs/implementation-status.md).
 
 Accept an order event, persist it in PostgreSQL, and deliver it to a configured HTTP receiver through a separate worker.
 
 **Implementation rules:** [10 steps with a mandatory full regression gate after each step](IMPLEMENTATION-POLICIES.md).
 
-**Delivery progress:** [10-step roadmap](docs/delivery-roadmap.md) — 6 steps verified complete; next: the browser demonstration page.
+**Delivery progress:** [10-step roadmap](docs/delivery-roadmap.md) — 7 steps verified complete; next: CI and operations.
 
-**Local preview: bounded retries, crash recovery, durable receiver deduplication and isolated demo scenarios.** Public demo, screenshot, and public HTTPS link are not available yet. Interactive API documentation is at [localhost:8000/docs](http://localhost:8000/docs) after startup.
+**Local preview: bounded retries, crash recovery, durable receiver deduplication and a browser delivery lab.** Public deployment and an HTTPS link remain pending. Interactive API documentation is at [localhost:8000/docs](http://localhost:8000/docs) after startup.
 
 ## Try it
 
@@ -21,6 +21,27 @@ make init   # creates private .env; leaves an existing file unchanged
 make up     # builds, migrates, starts services, waits for health checks
 make demo   # posts a synthetic order and prints its actual delivery history
 ```
+
+Open [the local delivery lab](http://localhost:8000/) and choose **Successful
+delivery**, **Retry & recover**, or **Permanent failure**. The page shows the event
+ID, elapsed time and actual worker attempts. It refreshes every two seconds until
+completion or two minutes; **Refresh status** fetches another result manually.
+Run access stays in tab memory and is cleared by reload. The **Source** link opens
+selected application files locally until the repository is published.
+
+Browser verification uses headless Chromium against the running stack:
+
+```sh
+npm ci
+npx playwright install chromium
+npm run test:browser
+```
+
+To use an existing Chromium installation, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to
+its executable path. The browser checks create real demo runs, so allow the
+60-second creation window to clear before repeating them or running demo smoke
+checks. Screenshots are written under `test-results/`; token-bearing network
+traces are disabled.
 
 The API binds only to `127.0.0.1:8000`. PostgreSQL and the receiver have no published ports. Set the `X-API-Key` authorization in `/docs` using the local `OPERATOR_API_KEY` value in `.env`; do not share that file.
 
@@ -66,7 +87,7 @@ The worker recovers expired leases (60 seconds by default), marks interrupted at
 
 The example receiver stores its simulated fulfillment in `fulfillment_effects`, independently of operator event retention; expired terminal demo effects are cleaned with their runs. The unique event ID and the effect are the same atomic insert; duplicates return 200 without changing the first effect. This demonstrates database-backed effects, not deduplication of arbitrary external actions. Existing pre-migration deliveries are not backfilled with invented receiver effects.
 
-Operator events and idempotency keys are retained indefinitely until explicitly removed. Expired terminal demo runs are cleaned by the worker after a further 24 hours. The browser page remains pending. `DEMO_MODE=true` enables the local demo endpoints and permits the exact internal Compose receiver URL. Demo creation and polling quotas, storage admission and cleanup are described in the [sandbox guide](docs/sandbox.md). Public deployment remains pending.
+Operator events and idempotency keys are retained indefinitely until explicitly removed. Expired terminal demo runs are cleaned by the worker after a further 24 hours. `DEMO_MODE=true` enables the browser scenarios and local demo endpoints and permits the exact internal Compose receiver URL. Demo creation and polling quotas, storage admission and cleanup are described in the [sandbox guide](docs/sandbox.md). Public deployment remains pending.
 
 ## Verification and operations
 

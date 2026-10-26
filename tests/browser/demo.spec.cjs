@@ -13,10 +13,11 @@ async function mockCreation(page) {
 }
 
 test('real deliveries, keyboard access, mobile layout and refresh', async ({page}) => {
+  test.setTimeout(90000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   const urls = []; page.on('request', request => urls.push(request.url()));
   await page.goto('/');
-  await expect(page.locator('#health')).toHaveText('API ready · Worker online');
+  await expect(page.locator('#health')).toHaveText('API ready · Worker online', {timeout:20000});
   await page.keyboard.press('Tab');
   await expect(page.getByRole('link', {name:'Skip to scenarios'})).toBeFocused();
   await page.keyboard.press('Enter');
@@ -26,12 +27,16 @@ test('real deliveries, keyboard access, mobile layout and refresh', async ({page
   await expect(page.locator('#status')).toHaveText('Delivered', {timeout:20000});
   await expect(page.locator('#attempts tr')).toHaveCount(1);
   await expect(page.locator('#attempts td').nth(3)).toHaveText('200');
+  const successEvent = await page.locator('#event-id').textContent();
   await page.getByRole('button', {name:/Retry & recover/}).click();
+  await expect(page.locator('#event-id')).not.toHaveText(successEvent);
   await expect(page.locator('#status')).toHaveText('Delivered', {timeout:25000});
   await expect(page.locator('#attempts tr')).toHaveCount(3);
   expect(await page.locator('#attempts tr td:nth-child(4)').allTextContents()).toEqual(['503','503','200']);
   await page.screenshot({path:'test-results/desktop-retry.png', fullPage:true});
+  const retryEvent = await page.locator('#event-id').textContent();
   await page.getByRole('button', {name:/Permanent failure/}).click();
+  await expect(page.locator('#event-id')).not.toHaveText(retryEvent);
   await expect(page.locator('#status')).toHaveText('Failed', {timeout:20000});
   await expect(page.locator('#attempts tr')).toHaveCount(1);
   await expect(page.locator('#attempts td').nth(3)).toHaveText('400');

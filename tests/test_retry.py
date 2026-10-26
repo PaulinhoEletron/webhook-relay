@@ -197,6 +197,9 @@ def test_real_http_retry_lifecycle(
 @pytest.mark.parametrize("failure", ["connection", "phase_timeout", "deadline"])
 def test_transport_failure_schedules_retry(client, app, settings, headers, failure):
     event = client.post("/v1/events", headers=headers, json=PAYLOAD).json()
+    # Scheduling assertions must not depend on how quickly the host runs SQL.
+    # The transport deadline below still uses the real asyncio clock.
+    now = datetime.now(UTC)
     calls = []
 
     async def handler(request):
@@ -214,12 +217,17 @@ def test_transport_failure_schedules_retry(client, app, settings, headers, failu
                 app.state.sessions,
                 settings.model_copy(update={"request_deadline": 0.01}),
                 transport,
+                clock=lambda: now,
+                jitter=lambda: 0,
             )
-            assert not await run_once(app.state.sessions, settings, transport)
+            assert not await run_once(app.state.sessions, settings, transport, clock=lambda: now)
 
     asyncio.run(deliver())
     state = client.get(event["status_url"], headers=headers).json()
     assert state["status"] == "retry_wait"
+    with app.state.sessions() as session:
+        delivery = session.get(Delivery, UUID(event["event_id"]))
+        assert delivery.next_attempt_at == now + timedelta(seconds=5)
     assert state["last_error_code"] == (
         "connection_error" if failure == "connection" else "timeout"
     )
