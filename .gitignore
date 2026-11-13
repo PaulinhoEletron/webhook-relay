@@ -11,3 +11,13 @@ __pycache__/
 node_modules/
 test-results/
 playwright-report/
+
+# Local workflow files
+PLAN.md
+CLAUDE.md
+AGENTS.md
+reviews/
+.claude/
+GUIDELINES.md
+IMPLEMENTATION-POLICIES.md
+webhook-relay-project-spec.md

@@ -1,20 +1,12 @@
 # Webhook Relay
 
-**Environment verified (2026-10-26):** Compose startup, 121 backend tests, 5 browser tests, live delivery and restart persistence passed. See [implementation status](docs/implementation-status.md).
-
 Accept an order event, persist it in PostgreSQL, and deliver it to a configured HTTP receiver through a separate worker.
 
-**Implementation rules:** [10 steps with a mandatory full regression gate after each step](IMPLEMENTATION-POLICIES.md).
-
-**Delivery progress:** [10-step roadmap](docs/delivery-roadmap.md) — 7 steps verified complete; next: CI and operations.
-
-**Local preview: bounded retries, crash recovery, durable receiver deduplication and a browser delivery lab.** Public deployment and an HTTPS link remain pending. Interactive API documentation is at [localhost:8000/docs](http://localhost:8000/docs) after startup.
+**Bounded retries, crash recovery, durable receiver deduplication and a browser delivery lab.** Interactive API documentation is at [localhost:8000/docs](http://localhost:8000/docs) after startup.
 
 ## Try it
 
 Requires Docker Engine with Compose and Python 3 for local secret generation:
-
-The Docker host conflict was repaired by switching to the installed native daemon. Application security settings remain enabled. Historical repair and rollback instructions are in [Docker host repair](docs/docker-host-repair.md).
 
 ```sh
 make init   # creates private .env; leaves an existing file unchanged
@@ -73,6 +65,7 @@ make lint
 make test       # isolated PostgreSQL relay_test database; no SQLite
 make migrate    # explicit migration job
 make down      # stops containers, preserves the application database volume
+make clean     # stops containers and DELETES the database volume (local data)
 ```
 
 `make test` leaves the test database container available for subsequent runs. Stop it with `docker compose --profile test stop test-db`. Tests truncate **only** a database named `relay_test`. The runtime database is `relay`.
@@ -87,13 +80,13 @@ The worker recovers expired leases (60 seconds by default), marks interrupted at
 
 The example receiver stores its simulated fulfillment in `fulfillment_effects`, independently of operator event retention; expired terminal demo effects are cleaned with their runs. The unique event ID and the effect are the same atomic insert; duplicates return 200 without changing the first effect. This demonstrates database-backed effects, not deduplication of arbitrary external actions. Existing pre-migration deliveries are not backfilled with invented receiver effects.
 
-Operator events and idempotency keys are retained indefinitely until explicitly removed. Expired terminal demo runs are cleaned by the worker after a further 24 hours. `DEMO_MODE=true` enables the browser scenarios and local demo endpoints and permits the exact internal Compose receiver URL. Demo creation and polling quotas, storage admission and cleanup are described in the [sandbox guide](docs/sandbox.md). Public deployment remains pending.
+Operator events and idempotency keys are retained indefinitely until explicitly removed. Expired terminal demo runs are cleaned by the worker after a further 24 hours. `DEMO_MODE=true` enables the browser scenarios and local demo endpoints and permits the exact internal Compose receiver URL. Demo creation and polling quotas, storage admission and cleanup are described in the [sandbox guide](docs/sandbox.md).
 
 ## Verification and operations
 
-See [implementation status](docs/implementation-status.md) for actual checks and remaining milestones, and the [full regression checklist](docs/regression-checklist.md) for the mandatory gate after every step. CI and public deployment are not complete. No measured throughput or production availability is claimed.
+Run `make lint` and `make test` for the static and backend checks, `make demo` for a live delivery, and the demo smoke below for all scenarios. No measured throughput or production availability is claimed.
 
-Use `docker compose logs --tail=50 api worker receiver` to inspect execution. Use `docker compose restart worker` to resume pending jobs after stopping the worker; interrupted claims recover automatically after their leases expire. Database outages return sanitized 503 responses, and the worker backs off up to 30 seconds. Keep `.env` unchanged across restarts so its database password still matches the volume. Never use `docker compose down -v` unless deliberately deleting local data.
+Use `docker compose logs --tail=50 api worker receiver` to inspect execution. Use `docker compose restart worker` to resume pending jobs after stopping the worker; interrupted claims recover automatically after their leases expire. Database outages return sanitized 503 responses, and the worker backs off up to 30 seconds. Keep `.env` unchanged across restarts so its database password still matches the volume. Use `make clean` (or `docker compose down -v`) only when deliberately deleting local data.
 
 ## Isolated local demo runs
 

@@ -1,10 +1,17 @@
-.PHONY: init up down test lint migrate demo
+-include .env
+export
+
+.PHONY: init up down clean test lint migrate demo
 init:
 	python3 examples/init_env.py
 up:
 	docker compose up --build -d --wait
+# Stops the stack and the test database container; keeps the data volume.
 down:
-	docker compose down
+	docker compose --profile test down
+# Destructive: also deletes the database volume (all local data).
+clean:
+	docker compose --profile test down -v
 migrate:
 	docker compose run --rm migrate
 test:
