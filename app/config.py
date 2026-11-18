@@ -1,4 +1,3 @@
-import ipaddress
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -18,15 +17,24 @@ class Settings(BaseSettings):
     request_deadline: float = Field(default=10, gt=0, le=10)
     lease_duration: int = Field(default=60, ge=60)
     demo_storage_limit_bytes: int = Field(default=268435456, ge=1)
-    trusted_proxy_cidrs: list[str] = Field(default_factory=list)
+    trust_cf_connecting_ip: bool = False
+    body_read_timeout: float = Field(default=10, gt=0, le=60)
+    source_url: str = ""
     public_base_url: str = "http://localhost:8000"
     metrics_port: int = Field(default=9090, ge=0, le=65535)
     worker_metrics_port: int = Field(default=9091, ge=0, le=65535)
 
     @model_validator(mode="after")
     def safe_configuration(self):
-        for network in self.trusted_proxy_cidrs:
-            ipaddress.ip_network(network, strict=True)
+        if self.source_url:
+            source = urlsplit(self.source_url)
+            if (
+                source.scheme != "https"
+                or not source.hostname
+                or source.username
+                or source.password
+            ):
+                raise ValueError("SOURCE_URL must be an https:// URL without credentials")
         if not self.database_url.startswith("postgresql+psycopg://"):
             raise ValueError("Use PostgreSQL with psycopg")
         for secret in (self.operator_api_key, self.signing_secret):

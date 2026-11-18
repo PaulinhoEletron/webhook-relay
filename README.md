@@ -18,8 +18,8 @@ Open [the local delivery lab](http://localhost:8000/) and choose **Successful
 delivery**, **Retry & recover**, or **Permanent failure**. The page shows the event
 ID, elapsed time and actual worker attempts. It refreshes every two seconds until
 completion or two minutes; **Refresh status** fetches another result manually.
-Run access stays in tab memory and is cleared by reload. The **Source** link opens
-selected application files locally until the repository is published.
+Run access stays in tab memory and is cleared by reload. The **Source** link points to
+`SOURCE_URL` (the public repository) and is hidden when that setting is empty.
 
 Browser verification uses headless Chromium against the running stack:
 
@@ -112,4 +112,4 @@ Exercise all scenarios locally without printing read tokens:
 docker compose exec -T api python -m examples.demo_smoke
 ```
 
-See [sandbox limits and proxy configuration](docs/sandbox.md) before configuring a reverse proxy.
+See [sandbox limits, client identity and HTTP edge settings](docs/sandbox.md).

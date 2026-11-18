@@ -43,19 +43,32 @@ These are application workload limits, not network-level denial-of-service prote
 
 ## Client address and proxies
 
-The packaged API starts Uvicorn with `--no-proxy-headers`: it preserves the real TCP
-peer for the application. By default `TRUSTED_PROXY_CIDRS=[]`; forwarded headers,
-including `X-Forwarded-For`, cannot override that peer. Clients behind one NAT/proxy
-share its quota until a trusted proxy is deliberately configured. Client identifiers
-are HMAC-SHA256 digests of addresses; raw addresses are not saved in quota records.
+The packaged API starts Uvicorn with `--no-proxy-headers`, so the application sees the
+real TCP peer. By default that peer is the client identity; `X-Forwarded-For` and
+`X-Real-IP` are never trusted. Clients behind one NAT/proxy share its quota. Client
+identifiers are HMAC-SHA256 digests; raw addresses are not saved in quota records.
+IPv6 clients are keyed by their /64 prefix, and IPv4-mapped IPv6 addresses by the IPv4
+address.
 
-For a future reverse proxy, set `TRUSTED_PROXY_CIDRS` to a JSON list of that proxy's
-exact peer CIDRs. The proxy must **replace** `X-Forwarded-For` with exactly one valid
-client IP and prevent direct access that can impersonate a trusted peer. Missing,
-multiple, chained or invalid values from a trusted proxy return HTTP 400. Other
-forwarded identity headers are ignored. Do not configure broad networks merely to
-make forwarding work. Keep `--no-proxy-headers` when starting Uvicorn outside Docker.
-The actual tunnel/proxy integration still needs verification in deployment step 9.
+When the API is reachable only through a Cloudflare tunnel, set
+`TRUST_CF_CONNECTING_IP=true`. The application then uses the `CF-Connecting-IP` header
+if exactly one valid IP is present; a missing, repeated or invalid header falls back
+to the socket peer (the request is still served). Do not enable it while the API port
+is directly reachable, because any client could then choose its own identity.
+
+## HTTP edge
+
+Every response carries a restrictive `Content-Security-Policy`, `X-Content-Type-Options`,
+`X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` and `Cross-Origin-*-Policy`
+headers; `/v1/*`, `/demo/*` and `/health/*` are `Cache-Control: no-store`. A header
+set by a route (the demo page's stricter CSP) is not overridden. `/docs` (Swagger UI,
+loaded from jsDelivr) gets a looser CSP that allows that CDN; `/redoc` is disabled.
+
+The request body must arrive within `BODY_READ_TIMEOUT` seconds (default 10), otherwise
+the API answers 408. Uvicorn runs with `--timeout-keep-alive 5` and
+`--limit-concurrency 64` (excess requests receive 503). Unknown paths return 404 and
+unsupported methods return 405, both as JSON errors. `HEAD` on the `/health/*`
+endpoints answers like `GET` without a body; `OPTIONS` (and `HEAD` elsewhere) returns 405.
 
 ## Cleanup
 
@@ -72,5 +85,5 @@ Cleanup and admission share the advisory lock. If the worker is offline or the
 database is unavailable, cleanup pauses; storage admission still rejects at capacity.
 
 Verification: `tests/test_sandbox.py` covers concurrency, quota boundaries, storage,
-polling, proxy trust, sanitization, retention and actual worker-process cleanup.
+polling, client identity, sanitization, retention and actual worker-process cleanup.
 `examples.sandbox_smoke` checks the running API without printing read tokens.

@@ -155,26 +155,59 @@ def test_poll_global_cap_bounds_cardinality(app):
         assert session.get(PollBucket, "last") is None
 
 
-def test_proxy_identity_is_explicit_and_unambiguous(settings):
-    trusted = settings.model_copy(update={"trusted_proxy_cidrs": ["10.1.0.0/16"]})
+def _request(peer, headers):
+    return Request(
+        {
+            "type": "http",
+            "client": (peer, 1000),
+            "headers": [(k.encode(), v.encode()) for k, v in headers],
+        }
+    )
 
-    def request(peer, values):
-        return Request(
-            {
-                "type": "http",
-                "client": (peer, 1000),
-                "headers": [(b"x-forwarded-for", value.encode()) for value in values],
-            }
+
+def test_forwarded_headers_never_change_identity(settings):
+    direct = client_key(_request("192.0.2.1", []), settings)
+    spoofed = [("x-forwarded-for", "192.0.2.9"), ("x-real-ip", "192.0.2.8")]
+    assert client_key(_request("192.0.2.1", spoofed), settings) == direct
+    # CF-Connecting-IP is ignored unless explicitly trusted.
+    assert (
+        client_key(_request("192.0.2.1", [("cf-connecting-ip", "192.0.2.7")]), settings) == direct
+    )
+
+
+def test_cloudflare_identity_is_explicit_and_unambiguous(settings):
+    trusted = settings.model_copy(update={"trust_cf_connecting_ip": True})
+    direct = client_key(_request("172.18.0.5", []), trusted)
+    one = client_key(_request("172.18.0.5", [("cf-connecting-ip", "192.0.2.7")]), trusted)
+    other = client_key(_request("172.18.0.5", [("cf-connecting-ip", "192.0.2.8")]), trusted)
+    assert len({direct, one, other}) == 3
+    assert one == client_key(_request("172.18.0.6", [("cf-connecting-ip", "192.0.2.7")]), trusted)
+    for headers in (
+        [("cf-connecting-ip", "unknown")],
+        [("cf-connecting-ip", "")],
+        [("cf-connecting-ip", "192.0.2.7"), ("cf-connecting-ip", "192.0.2.8")],
+        [("cf-connecting-ip", "192.0.2.7, 192.0.2.8")],
+    ):
+        assert client_key(_request("172.18.0.5", headers), trusted) == direct
+        assert (
+            client_key(_request("172.18.0.5", headers + [("x-forwarded-for", "1.1.1.1")]), trusted)
+            == direct
         )
 
-    direct = client_key(request("192.0.2.1", []), settings)
-    assert client_key(request("10.1.0.2", ["192.0.2.1"]), trusted) == direct
-    assert client_key(request("192.0.2.1", ["192.0.2.2"]), trusted) == direct
-    for values in ([], ["unknown"], ["192.0.2.1, 192.0.2.2"], ["192.0.2.1", "192.0.2.2"]):
-        with pytest.raises(HTTPException):
-            client_key(request("10.1.0.2", values), trusted)
-    with pytest.raises(ValueError):
-        type(settings)(**{**settings.model_dump(), "trusted_proxy_cidrs": ["invalid"]})
+
+def test_ipv6_keyed_by_64_and_mapped_ipv4(settings):
+    trusted = settings.model_copy(update={"trust_cf_connecting_ip": True})
+
+    def key(value):
+        return client_key(_request("172.18.0.5", [("cf-connecting-ip", value)]), trusted)
+
+    assert key("2001:db8:1:2::1") == key("2001:db8:1:2:ffff::9")
+    assert key("2001:db8:1:2::1") != key("2001:db8:1:3::1")
+    assert key("::ffff:192.0.2.7") == key("192.0.2.7")
+    assert key("192.0.2.7") != key("192.0.2.8")
+    assert client_key(_request("2001:db8::1", []), settings) == client_key(
+        _request("2001:db8::ffff", []), settings
+    )
 
 
 def test_cleanup_only_expired_terminal_demo_data(app, client, headers):

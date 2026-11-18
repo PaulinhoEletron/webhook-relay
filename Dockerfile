@@ -12,7 +12,7 @@ COPY migrations ./migrations
 COPY alembic.ini ./
 COPY examples ./examples
 USER 10001:10001
-CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers"]
+CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers", "--timeout-keep-alive", "5", "--limit-concurrency", "64"]
 
 FROM base AS test
 USER root

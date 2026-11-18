@@ -41,7 +41,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    command: [uvicorn, 'receiver.main:create_app', --factory, --host, '0.0.0.0', --port, '8001', --no-access-log, --log-level, info]
+    command: [uvicorn, 'receiver.main:create_app', --factory, --host, '0.0.0.0', --port, '8001', --no-access-log, --timeout-keep-alive, '5', --log-level, info]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live')"]
       interval: 3s
@@ -51,6 +51,8 @@ services:
   api:
     <<: *app
     ports: ['127.0.0.1:8000:8000']
+    environment:
+      TRUST_CF_CONNECTING_IP: ${TRUST_CF_CONNECTING_IP:-false}
     depends_on:
       migrate:
         condition: service_completed_successfully

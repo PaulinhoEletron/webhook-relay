@@ -24,12 +24,19 @@ def test_demo_page_assets_and_no_secret_exposure(client, settings):
     assert client.get("/assets/config.py").status_code == 404
 
 
-def test_source_preview_is_allowlisted(client):
-    assert client.get("/source").status_code == 200
-    assert "text/plain" in client.get("/source/worker").headers["content-type"]
-    assert "def claim(" in client.get("/source/worker").text
-    for name in (".env", "config", "main", "database_url"):
-        assert client.get(f"/source/{name}").status_code == 404
+def test_source_routes_removed(client):
+    for path in ("/source", "/source/worker"):
+        assert client.get(path).status_code == 404
+
+
+def test_source_link_comes_from_setting(settings):
+    url = "https://github.com/example/relay"
+    with TestClient(create_app(settings.model_copy(update={"source_url": url}))) as client:
+        page = client.get("/")
+        assert f'<a href="{url}" rel="noopener noreferrer"' in page.text
+        assert "default-src 'none'" in page.headers["content-security-policy"]
+    with TestClient(create_app(settings)) as client:
+        assert "Source" not in client.get("/").text
 
 
 def test_page_available_when_demo_disabled(settings):

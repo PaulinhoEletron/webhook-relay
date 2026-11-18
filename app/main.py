@@ -14,7 +14,7 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import FileResponse, HTMLResponse, PlainTextResponse
+from starlette.responses import FileResponse, HTMLResponse
 
 from app.api.middleware import RequestBoundary, error_response
 from app.api.schemas import Accepted, AttemptView, DemoInput, ErrorResponse, EventInput, EventStatus
@@ -40,7 +40,7 @@ def create_app(settings=None):
         yield
         engine.dispose()
 
-    app = FastAPI(title="Webhook Relay", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Webhook Relay", version="0.1.0", lifespan=lifespan, redoc_url=None)
     static = Path(__file__).parent / "static"
     page_headers = {
         "Content-Security-Policy": (
@@ -52,9 +52,17 @@ def create_app(settings=None):
         "Cache-Control": "no-store",
     }
 
+    source_link = (
+        f'<a href="{html.escape(settings.source_url, quote=True)}" '
+        'rel="noopener noreferrer" target="_blank">Source ↗</a>'
+        if settings.source_url
+        else ""
+    )
+    page = (static / "index.html").read_text().replace("<!--SOURCE_LINK-->", source_link)
+
     @app.get("/", include_in_schema=False)
     def demo_page():
-        return FileResponse(static / "index.html", headers=page_headers)
+        return HTMLResponse(page, headers=page_headers)
 
     @app.get("/assets/{name}", include_in_schema=False)
     def demo_asset(name: str):
@@ -62,42 +70,11 @@ def create_app(settings=None):
             raise HTTPException(404, "not_found")
         return FileResponse(static / name, headers=page_headers)
 
-    sources = {
-        "ingestion": "services/ingestion.py",
-        "worker": "worker/main.py",
-        "retries": "worker/retry.py",
-        "schema": "db/models.py",
-        "sandbox": "services/sandbox.py",
-    }
-
-    @app.get("/source", response_class=HTMLResponse, include_in_schema=False)
-    def source_index():
-        links = "".join(
-            f'<li><a href="/source/{key}">{html.escape(path)}</a></li>'
-            for key, path in sources.items()
-        )
-        return HTMLResponse(
-            '<!doctype html><html lang="en"><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>Webhook Relay source</title><link rel="stylesheet" href="/assets/demo.css">'
-            "<main><h1>Source preview</h1><p>Selected files from this running application. "
-            "The GitHub repository link will be added when the project is published.</p>"
-            f'<ul>{links}</ul><a href="/">Back to the demo</a></main></html>',
-            headers=page_headers,
-        )
-
-    @app.get("/source/{name}", include_in_schema=False)
-    def source_file(name: str):
-        if name not in sources:
-            raise HTTPException(404, "not_found")
-        return PlainTextResponse(
-            (Path(__file__).parent / sources[name]).read_text(), headers=page_headers
-        )
-
     app.state.sessions = sessions
     app.add_middleware(
         RequestBoundary,
         client_id=lambda scope: client_key(Request(scope), settings)[:16],
+        body_timeout=settings.body_read_timeout,
     )
     api_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -136,10 +113,12 @@ def create_app(settings=None):
             "service_unavailable", "Database unavailable", request.state.request_id, 503
         )
 
+    @app.head("/health/live", include_in_schema=False)
     @app.get("/health/live")
     def live():
         return {"status": "ok"}
 
+    @app.head("/health/ready", include_in_schema=False)
     @app.get("/health/ready", responses={503: {"model": ErrorResponse}})
     def ready(request: Request):
         with engine.connect() as connection:
@@ -215,6 +194,7 @@ def create_app(settings=None):
                 )
             ]
 
+    @app.head("/health/worker", include_in_schema=False)
     @app.get("/health/worker")
     def worker_health():
         with sessions() as session:

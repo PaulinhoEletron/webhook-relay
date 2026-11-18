@@ -58,8 +58,11 @@ test('real deliveries, keyboard access, mobile layout and refresh', async ({page
   await page.reload();
   await expect(page.locator('#run')).toBeHidden();
   await expect(page.getByRole('button', {name:'Refresh status'})).toBeDisabled();
-  await page.getByRole('link',{name:'Source',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'Source preview'})).toBeVisible();
+  const source = page.getByRole('link',{name:/^Source/});
+  if (process.env.EXPECT_SOURCE_URL) {
+    await expect(source).toHaveAttribute('href', process.env.EXPECT_SOURCE_URL);
+    await expect(source).toHaveAttribute('rel', 'noopener noreferrer');
+  } else await expect(source).toHaveCount(0);
 });
 
 test('API unavailable and worker offline are clear and prevent creation', async ({page}) => {

@@ -16,24 +16,31 @@ from app.metrics import QUOTA_REJECTIONS
 LOCK_ID = 63006
 
 
+def normalize_ip(value):
+    """Canonical key material: IPv4 in full, IPv6 by /64, IPv4-mapped IPv6 as IPv4."""
+    address = ipaddress.ip_address(value.strip())
+    if address.version == 6:
+        if address.ipv4_mapped:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.ip_network((address, 64), strict=False))
+    return str(address)
+
+
 def client_key(request, settings):
     peer = request.client.host if request.client else "unknown"
     try:
-        trusted = any(
-            ipaddress.ip_address(peer) in ipaddress.ip_network(network)
-            for network in settings.trusted_proxy_cidrs
-        )
+        peer = normalize_ip(peer)
     except ValueError:
-        trusted = False
-    if trusted:
-        forwarded = request.headers.getlist("x-forwarded-for")
-        try:
-            if len(forwarded) != 1:
-                raise ValueError
-            peer = str(ipaddress.ip_address(forwarded[0].strip()))
-        except ValueError:
-            raise HTTPException(400, "invalid_request") from None
-    # Untrusted forwarded headers never participate in client identity.
+        pass
+    if settings.trust_cf_connecting_ip:
+        # Only valid when the app is reachable solely through Cloudflare's tunnel.
+        values = request.headers.getlist("cf-connecting-ip")
+        if len(values) == 1:
+            try:
+                peer = normalize_ip(values[0])
+            except ValueError:
+                pass
+    # X-Forwarded-For and X-Real-IP never participate in client identity.
     return hmac.new(
         settings.signing_secret.get_secret_value().encode(), peer.encode(), hashlib.sha256
     ).hexdigest()
