@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.models import Delivery, DemoRun, Event, FulfillmentEffect, PollBucket
+from app.metrics import QUOTA_REJECTIONS
 
 LOCK_ID = 63006
 
@@ -38,7 +39,8 @@ def client_key(request, settings):
     ).hexdigest()
 
 
-def limited(seconds):
+def limited(seconds, reason):
+    QUOTA_REJECTIONS.labels(reason).inc()
     raise HTTPException(
         429, "quota_exceeded", headers={"Retry-After": str(max(1, math.ceil(seconds)))}
     )
@@ -56,10 +58,13 @@ def admit(session, key, settings, now):
         .join(DemoRun, DemoRun.event_id == Event.id)
         .where(Event.created_at > minute)
     )
-    for query, limit in ((recent.where(DemoRun.client_key == key), 5), (recent, 30)):
+    for query, limit, reason in (
+        (recent.where(DemoRun.client_key == key), 5, "client_rate"),
+        (recent, 30, "global_rate"),
+    ):
         times = session.scalars(query.order_by(Event.created_at)).all()
         if len(times) >= limit:
-            limited((times[-limit] + timedelta(minutes=1) - now).total_seconds())
+            limited((times[-limit] + timedelta(minutes=1) - now).total_seconds(), reason)
     day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     daily = session.scalar(
         select(func.count())
@@ -67,7 +72,7 @@ def admit(session, key, settings, now):
         .where(Event.scope_id == "demo", Event.created_at >= day)
     )
     if daily >= 1000:
-        limited((day + timedelta(days=1) - now).total_seconds())
+        limited((day + timedelta(days=1) - now).total_seconds(), "daily")
     active = session.scalar(
         select(func.count())
         .select_from(Delivery)
@@ -77,10 +82,10 @@ def admit(session, key, settings, now):
         )
     )
     if active >= 100:
-        limited(60)
+        limited(60, "active")
     size = session.scalar(text("SELECT pg_database_size(current_database())"))
     if size >= settings.demo_storage_limit_bytes:
-        limited(60)
+        limited(60, "storage")
 
 
 def poll(sessions, key, *, now=None):
@@ -90,10 +95,10 @@ def poll(sessions, key, *, now=None):
     with sessions.begin() as session:
         lock(session)
         session.execute(delete(PollBucket).where(PollBucket.window_start < window))
-        for identity, limit in (("global", 600), (key, 60)):
+        for identity, limit, reason in (("global", 600, "poll_global"), (key, 60, "poll_client")):
             bucket = session.get(PollBucket, identity)
             if bucket is not None and bucket.count >= limit:
-                limited(60 - now.second)
+                limited(60 - now.second, reason)
         for identity in ("global", key):
             session.execute(
                 insert(PollBucket)

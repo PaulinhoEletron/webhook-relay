@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import random
 import signal
@@ -15,6 +14,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import Settings
 from app.db.models import Attempt, Delivery, Event, WorkerHeartbeat
 from app.db.session import database
+from app.logging import configure_logging
+from app.metrics import (
+    ATTEMPT_DURATION,
+    DELIVERIES_TERMINAL,
+    DELIVERY_ATTEMPTS,
+    WORKER_INFLIGHT,
+    serve,
+)
 from app.services.sandbox import cleanup
 from app.signing import signature
 from app.worker.retry import MAX_ATTEMPTS, retry_delay, retryable
@@ -99,7 +106,10 @@ def recover_expired(sessions, *, now=None, retry_profile="production", jitter=ra
             delivery.lease_token = None
             delivery.lease_expires_at = None
             delivery.updated_at = now
-        return len(expired)
+        failed = sum(1 for delivery in expired if delivery.status == "failed")
+    if failed:
+        DELIVERIES_TERMINAL.labels("failed").inc(failed)
+    return len(expired)
 
 
 def finalize(
@@ -160,6 +170,9 @@ def finalize(
         attempt.outcome = "delivered" if delivered else "failed"
         attempt.http_status = status
         attempt.duration_ms = duration
+        final = delivery.status
+    if final in ("delivered", "failed"):
+        DELIVERIES_TERMINAL.labels(final).inc()
     return True
 
 
@@ -190,6 +203,7 @@ async def run_once(sessions, settings, client, *, clock=utc_now, jitter=random.r
     }
     start, status, error = time.monotonic(), None, None
     retry_after = None
+    WORKER_INFLIGHT.inc()
     try:
         # HTTPX phase timeouts do not impose an overall deadline; asyncio does.
         async with asyncio.timeout(settings.request_deadline):
@@ -205,6 +219,8 @@ async def run_once(sessions, settings, client, *, clock=utc_now, jitter=random.r
         status, error = None, "timeout"
     except httpx.HTTPError:
         status, error = None, "connection_error"
+    finally:
+        WORKER_INFLIGHT.dec()
     duration = int((time.monotonic() - start) * 1000)
     saved = finalize(
         sessions,
@@ -217,22 +233,27 @@ async def run_once(sessions, settings, client, *, clock=utc_now, jitter=random.r
         now=clock(),
         jitter=jitter,
     )
+    outcome = error or "delivered"
+    DELIVERY_ATTEMPTS.labels(outcome).inc()
+    ATTEMPT_DURATION.observe(duration / 1000)
     logger.info(
-        json.dumps(
-            {
-                "event_id": str(event_id),
-                "attempt": number,
-                "outcome": error or "delivered",
-                "duration_ms": duration,
-                "finalized": saved,
-            }
-        )
+        "delivery_attempt",
+        extra={
+            "event_id": str(event_id),
+            "attempt": number,
+            "outcome": outcome,
+            "http_status": status,
+            "duration_ms": duration,
+            "finalized": saved,
+        },
     )
     return True
 
 
 async def main():
     settings = Settings()
+    configure_logging()
+    serve(settings.worker_metrics_port)
     engine, sessions = database(settings.database_url)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -254,7 +275,7 @@ async def main():
                     if worked:
                         continue
                 except SQLAlchemyError:
-                    logger.warning('{"outcome":"database_unavailable"}')
+                    logger.warning("database_unavailable")
                     backoff = min(backoff * 2, 30)
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=backoff)
@@ -265,5 +286,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
     asyncio.run(main())

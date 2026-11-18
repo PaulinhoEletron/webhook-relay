@@ -21,6 +21,8 @@ from app.api.schemas import Accepted, AttemptView, DemoInput, ErrorResponse, Eve
 from app.config import Settings
 from app.db.models import Attempt, Delivery, DemoRun, Event, WorkerHeartbeat
 from app.db.session import database
+from app.logging import configure_logging
+from app.metrics import DEMO_RUNS, EVENTS_ACCEPTED, serve
 from app.services.demo import create_run, token_hash
 from app.services.ingestion import IdempotencyConflict, ingest
 from app.services.sandbox import client_key, poll
@@ -28,11 +30,13 @@ from app.services.sandbox import client_key, poll
 
 def create_app(settings=None):
     settings = settings or Settings()
+    configure_logging()
     engine, sessions = database(settings.database_url)
     head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
 
     @asynccontextmanager
     async def lifespan(app):
+        serve(settings.metrics_port)
         yield
         engine.dispose()
 
@@ -91,7 +95,10 @@ def create_app(settings=None):
         )
 
     app.state.sessions = sessions
-    app.add_middleware(RequestBoundary)
+    app.add_middleware(
+        RequestBoundary,
+        client_id=lambda scope: client_key(Request(scope), settings)[:16],
+    )
     api_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 
     def authorize(key: Annotated[str | None, Depends(api_key)]):
@@ -167,6 +174,8 @@ def create_app(settings=None):
         except IdempotencyConflict:
             raise HTTPException(409, "idempotency_conflict") from None
         response.headers["Location"] = result["status_url"]
+        if not replayed:
+            EVENTS_ACCEPTED.inc()
         if replayed:
             response.status_code = 200
             response.headers["Idempotency-Replayed"] = "true"
@@ -222,7 +231,9 @@ def create_app(settings=None):
         if not settings.demo_mode:
             raise HTTPException(404, "not_found")
         response.headers["Cache-Control"] = "no-store"
-        return create_run(sessions, payload.scenario, client_key(request, settings), settings)
+        run = create_run(sessions, payload.scenario, client_key(request, settings), settings)
+        DEMO_RUNS.labels(payload.scenario).inc()
+        return run
 
     @app.get("/demo/runs/{run_id}")
     def demo_status(

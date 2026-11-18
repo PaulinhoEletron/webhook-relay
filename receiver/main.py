@@ -16,6 +16,7 @@ from app.api.middleware import RequestBoundary
 from app.config import Settings
 from app.db.models import DemoRun, FulfillmentEffect
 from app.db.session import database
+from app.logging import configure_logging
 from app.signing import signature
 
 logger = logging.getLogger("relay.receiver")
@@ -23,6 +24,7 @@ logger = logging.getLogger("relay.receiver")
 
 def create_app(settings=None):
     settings = settings or Settings()
+    configure_logging()
     engine, sessions = database(settings.database_url)
 
     @asynccontextmanager
@@ -89,7 +91,8 @@ def create_app(settings=None):
         if status != 200:
             return JSONResponse({"detail": "Demo scenario response"}, status_code=status)
         logger.info(
-            json.dumps({"event_id": event_id, "outcome": "fulfilled" if created else "duplicate"})
+            "webhook_received",
+            extra={"event_id": event_id, "outcome": "fulfilled" if created else "duplicate"},
         )
         return {"received": event_id}
 

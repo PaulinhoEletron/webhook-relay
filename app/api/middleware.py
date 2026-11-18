@@ -1,11 +1,13 @@
-import json
 import logging
 import time
 from uuid import uuid4
 
 from starlette.responses import JSONResponse
 
+from app.metrics import HTTP_DURATION, HTTP_REQUESTS
+
 logger = logging.getLogger("relay.api")
+UNMATCHED = "<unmatched>"
 MAX_BODY = 16 * 1024
 
 
@@ -19,9 +21,17 @@ def error_response(code, message, request_id, status):
 class RequestBoundary:
     """Bound incoming bytes even when Content-Length is missing or inaccurate."""
 
-    def __init__(self, app, max_body=MAX_BODY):
+    def __init__(self, app, max_body=MAX_BODY, client_id=None):
         self.app = app
         self.max_body = max_body
+        # Returns an already-hashed client identifier for the access log.
+        self.client_id = client_id
+
+    def log_client(self, scope):
+        try:
+            return self.client_id(scope) if self.client_id else None
+        except Exception:
+            return "invalid"
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -33,14 +43,20 @@ class RequestBoundary:
         async def with_id(message):
             if message["type"] == "http.response.start":
                 message.setdefault("headers", []).append((b"x-request-id", request_id.encode()))
+                elapsed = time.monotonic() - started
+                route = getattr(scope.get("route"), "path", None) or UNMATCHED
+                HTTP_REQUESTS.labels(route, str(message["status"])).inc()
+                HTTP_DURATION.labels(route).observe(elapsed)
                 logger.info(
-                    json.dumps(
-                        {
-                            "request_id": request_id,
-                            "status": message["status"],
-                            "duration_ms": int((time.monotonic() - started) * 1000),
-                        }
-                    )
+                    "request",
+                    extra={
+                        "request_id": request_id,
+                        "method": scope["method"],
+                        "route": route,
+                        "status": message["status"],
+                        "duration_ms": int(elapsed * 1000),
+                        "client": self.log_client(scope),
+                    },
                 )
             await send(message)
 

@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     demo_storage_limit_bytes: int = Field(default=268435456, ge=1)
     trusted_proxy_cidrs: list[str] = Field(default_factory=list)
     public_base_url: str = "http://localhost:8000"
+    metrics_port: int = Field(default=9090, ge=0, le=65535)
+    worker_metrics_port: int = Field(default=9091, ge=0, le=65535)
 
     @model_validator(mode="after")
     def safe_configuration(self):
