@@ -1,10 +1,13 @@
 name: webhook-relay
 
 x-app: &app
-  image: webhook-relay:0.1.0
+  image: webhook-relay:${RELAY_VERSION:-0.1.0}
   build:
     context: .
     target: runtime
+    args:
+      VERSION: ${RELAY_VERSION:-0.1.0}
+      GIT_SHA: ${GIT_SHA:-unknown}
   env_file: .env
   read_only: true
   tmpfs:
@@ -12,6 +15,8 @@ x-app: &app
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   mem_limit: 192m
+  cpus: 0.5
+  pids_limit: 128
 
 services:
   db:
@@ -27,11 +32,19 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    shm_size: 64m
     mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 128
 
   migrate:
     <<: *app
     command: [alembic, upgrade, head]
+    healthcheck:
+      disable: true
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +69,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      receiver:
+        condition: service_healthy
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 3s
@@ -66,6 +81,12 @@ services:
     <<: *app
     command: [python, -m, app.worker.main]
     stop_grace_period: 20s
+    healthcheck:
+      test: [CMD, python, -m, app.worker.healthcheck]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -85,17 +106,32 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    shm_size: 64m
     mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 128
 
   test:
     <<: *app
     profiles: [test]
-    image: webhook-relay-test:0.1.0
+    image: webhook-relay-test:${RELAY_VERSION:-0.1.0}
     build:
       context: .
       target: test
+    healthcheck:
+      disable: true
+    mem_limit: 384m
+    cpus: 1.0
+    pids_limit: 256
     environment:
       DATABASE_URL: postgresql+psycopg://relay:isolated-test-password@test-db:5432/relay_test
+      # Keep the suite independent of local .env tuning.
+      SOURCE_URL: ''
+      TRUST_CF_CONNECTING_IP: 'false'
+      BODY_READ_TIMEOUT: '10'
     command: [sh, -c, 'alembic upgrade head && alembic check && pytest -q -p no:cacheprovider']
     depends_on:
       test-db:
