@@ -24,15 +24,13 @@ Run access stays in tab memory and is cleared by reload. The **Source** link poi
 Browser verification uses headless Chromium against the running stack:
 
 ```sh
-npm ci
-npx playwright install chromium
-npm run test:browser
+npx playwright install chromium   # once, unless PLAYWRIGHT_CHROMIUM_EXECUTABLE is set
+make test-browser                 # npm ci + the Playwright suite
 ```
 
 To use an existing Chromium installation, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to
 its executable path. The browser checks create real demo runs, so allow the
-60-second creation window to clear before repeating them or running demo smoke
-checks. Screenshots are written under `test-results/`; token-bearing network
+60-second creation window to clear before repeating them or running `make e2e`. Screenshots are written under `test-results/`; token-bearing network
 traces are disabled.
 
 The API binds only to `127.0.0.1:8000`. PostgreSQL and the receiver have no published ports. Set the `X-API-Key` authorization in `/docs` using the local `OPERATOR_API_KEY` value in `.env`; do not share that file.
@@ -84,7 +82,7 @@ Operator events and idempotency keys are retained indefinitely until explicitly 
 
 ## Verification and operations
 
-Run `make lint` and `make test` for the static and backend checks, `make demo` for a live delivery, and the demo smoke below for all scenarios. No measured throughput or production availability is claimed.
+Run `make lint` and `make test` for the static and backend checks, `make demo` for a live delivery, `make e2e` for the full scenario run (delivery, replay, conflict, demo scenarios, rejections, restart), and `make test-browser` for the page. No measured throughput or production availability is claimed.
 
 Use `docker compose logs --tail=50 api worker receiver` to inspect execution. Use `docker compose restart worker` to resume pending jobs after stopping the worker; interrupted claims recover automatically after their leases expire. Database outages return sanitized 503 responses, and the worker backs off up to 30 seconds. Keep `.env` unchanged across restarts so its database password still matches the volume. Use `make clean` (or `docker compose down -v`) only when deliberately deleting local data.
 
@@ -106,7 +104,7 @@ fulfillment insert remains deduplicated by event ID.
 30 seconds, otherwise `offline`. API/database readiness remains a separate check.
 Set `DEMO_MODE=false` to disable both demo endpoints.
 
-Exercise all scenarios locally without printing read tokens:
+`make e2e` runs all scenarios without printing read tokens; the demo scenarios alone:
 
 ```sh
 docker compose exec -T api python -m examples.demo_smoke

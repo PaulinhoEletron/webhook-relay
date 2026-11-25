@@ -6,7 +6,7 @@ RELAY_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | he
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 export RELAY_VERSION GIT_SHA
 
-.PHONY: init up down clean test lint migrate demo
+.PHONY: init up down clean test lint migrate demo e2e test-browser
 init:
 	python3 examples/init_env.py
 up:
@@ -27,3 +27,11 @@ lint:
 	uv run --frozen ruff format --check .
 demo:
 	docker compose exec -T api python examples/producer.py
+# Full scenario run against the stack (starts it if needed); wait 60 s between runs (demo quota).
+e2e:
+	scripts/e2e.sh
+# Browser checks need a running stack. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE to use an installed
+# Chromium; otherwise run `npx playwright install chromium` once.
+test-browser:
+	npm ci
+	EXPECT_SOURCE_URL="$(SOURCE_URL)" npm run test:browser
