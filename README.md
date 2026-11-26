@@ -64,6 +64,9 @@ make test       # isolated PostgreSQL relay_test database; no SQLite
 make migrate    # explicit migration job
 make down      # stops containers, preserves the application database volume
 make clean     # stops containers and DELETES the database volume (local data)
+make backup    # pg_dump to backups/ (newest 7 kept)
+make restore FILE=backups/relay-<timestamp>.dump   # replaces all data; asks first
+make rollback VERSION=<git tag or commit>          # run an older version on the same data
 ```
 
 `make test` leaves the test database container available for subsequent runs. Stop it with `docker compose --profile test stop test-db`. Tests truncate **only** a database named `relay_test`. The runtime database is `relay`.
@@ -84,7 +87,7 @@ Operator events and idempotency keys are retained indefinitely until explicitly 
 
 Run `make lint` and `make test` for the static and backend checks, `make demo` for a live delivery, `make e2e` for the full scenario run (delivery, replay, conflict, demo scenarios, rejections, restart), and `make test-browser` for the page. No measured throughput or production availability is claimed.
 
-Use `docker compose logs --tail=50 api worker receiver` to inspect execution. Use `docker compose restart worker` to resume pending jobs after stopping the worker; interrupted claims recover automatically after their leases expire. Database outages return sanitized 503 responses, and the worker backs off up to 30 seconds. Keep `.env` unchanged across restarts so its database password still matches the volume. Use `make clean` (or `docker compose down -v`) only when deliberately deleting local data.
+Use `docker compose logs --tail=50 api worker receiver` to inspect execution. Use `docker compose restart worker` to resume pending jobs after stopping the worker; interrupted claims recover automatically after their leases expire. Database outages return sanitized 503 responses, and the worker backs off up to 30 seconds. Keep `.env` unchanged across restarts so its database password still matches the volume. Use `make clean` (or `docker compose down -v`) only when deliberately deleting local data. Backup, restore, rollback, failure runbooks and measured memory use are in [docs/operations.md](docs/operations.md).
 
 ## Isolated local demo runs
 

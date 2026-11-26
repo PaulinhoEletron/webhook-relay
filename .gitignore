@@ -23,3 +23,6 @@ IMPLEMENTATION-POLICIES.md
 webhook-relay-project-spec.md
 # Local copy of the shared security baseline (remove this line when the project SECURITY.md is added)
 /SECURITY.md
+
+# Database backups
+backups/
