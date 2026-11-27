@@ -1,0 +1,6 @@
+# linux-pam pam_namespace directory traversal (CVE-2025-6020): fixed in Debian 12 libpam
+# 1.5.2-6+deb12u3, not yet in the python base image. Not reachable here: no PAM stack in the
+# image enables pam_namespace, nothing in the container authenticates users through PAM, and
+# Compose runs every service as a fixed non-root user with no-new-privileges and cap_drop ALL
+# (so the setuid su binary grants nothing). Remove once the base image ships the fixed libpam.
+CVE-2025-6020

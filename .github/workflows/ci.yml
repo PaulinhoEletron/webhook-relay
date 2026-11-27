@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Scanners run as digest-pinned containers: the exact versions are the ones tested locally.
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:d845e7f0ac8517b9d9868b6d20379f9688ba3676595e50ca7c0b664964b2a760
+        env:
+          POSTGRES_USER: relay
+          POSTGRES_PASSWORD: ci-throwaway-password
+          POSTGRES_DB: relay_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relay -d relay_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://relay:ci-throwaway-password@localhost:5432/relay_test
+      SOURCE_URL: ''
+      TRUST_CF_CONNECTING_IP: 'false'
+      BODY_READ_TIMEOUT: '10'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Migrate the empty database and check for model drift
+        run: |
+          uv run --frozen alembic upgrade head
+          uv run --frozen alembic check
+      - name: Tests
+        run: uv run --frozen pytest -q -p no:cacheprovider
+      - name: Migration round trip
+        run: |
+          uv run --frozen alembic downgrade base
+          uv run --frozen alembic upgrade head
+
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Secret scan (full history)
+        run: docker run --rm -v "$PWD:/repo" "$GITLEAKS_IMAGE" git /repo --no-banner --redact --exit-code 1
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Python dependency audit
+        run: uv export --frozen --no-dev --no-emit-project --no-hashes -o requirements.txt && uvx pip-audit -r requirements.txt --no-deps --disable-pip
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: npm audit (production dependencies)
+        run: |
+          npm ci
+          npm audit --omit=dev
+
+  image-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Build runtime image
+        run: docker build --target runtime -t webhook-relay:ci .
+      - name: Trivy image scan (HIGH/CRITICAL with a fix available fail the build)
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$PWD/.trivyignore:/.trivyignore:ro"
+          "$TRIVY_IMAGE" image
+          --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+          --ignorefile /.trivyignore
+          webhook-relay:ci
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Generate local credentials and run the end-to-end check
+        run: |
+          make init
+          make e2e
+      - name: Collect Compose logs
+        if: failure()
+        run: docker compose logs --no-color > compose-logs.txt 2>&1 || true
+      - name: Upload Compose logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compose-logs
+          path: compose-logs.txt
+          retention-days: 7
+      - name: Tear down
+        if: always()
+        run: make clean
