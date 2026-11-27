@@ -1,6 +1,9 @@
 {
   "name": "webhook-relay-browser-checks",
   "private": true,
+  "description": "Browser checks for the Webhook Relay delivery lab",
+  "author": "Paulo Felipe Santos da Silva",
+  "license": "MIT",
   "scripts": {
     "test:browser": "playwright test"
   },

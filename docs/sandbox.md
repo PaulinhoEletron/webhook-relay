@@ -35,7 +35,7 @@ is a polling suggestion, not a promise that capacity will be available then.
 
 Status reads, including wrong/missing tokens and unknown valid UUIDs, are limited
 to 60 requests per client and 600 globally per UTC clock minute. Fixed windows can
-allow a burst at their boundary. They support the planned two-second UI polling.
+allow a burst at their boundary. They support the page's two-second polling.
 Counters are transactional and restart-persistent. A global cap bounds the number
 of new client buckets; old buckets are deleted on polling and worker cleanup.
 Malformed requests rejected by routing/validation are not counted as status reads.
